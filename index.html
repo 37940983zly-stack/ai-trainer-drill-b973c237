@@ -99,7 +99,8 @@ function home(){
   ops.appendChild(navBtn('❌ 错题重刷（' + wrongCount + ' 题）', () => drillQueue('错题本', buildWrongList())));
   ops.appendChild(navBtn('📝 全真模考（190 题 · 90 分钟）', () => mockExam()));
   ops.appendChild(navBtn('📊 统计', () => statsPage()));
-  ops.appendChild(navBtn('📤 导出（发给老师复盘）', () => exportPage()));
+  ops.appendChild(navBtn('📤 导出（发给老师/同步到别机）', () => exportPage()));
+  ops.appendChild(navBtn('📥 导入（从另一台设备同步）', () => importPage()));
   ops.appendChild(navBtn('🗑 清空本地记录', () => { if(confirm('确定清空错题和进度？')){ wrong={}; done={}; LS.set('wrong',{}); LS.set('done',{}); home(); } }));
   app.appendChild(ops);
 }
@@ -381,10 +382,61 @@ function exportPage(){
   const ws = Object.values(wrong).sort((a,b)=>b.ts-a.ts);
   lines.push('错题共 ' + ws.length + ' 题：');
   ws.forEach(w => lines.push('[' + w.bank + '·' + w.type + '·' + w.n + '] 错' + w.count + '次 我答' + (w.yours??'未答') + ' 正确' + (w.correct??'?') + '｜' + (w.q||'').slice(0,50)));
+  // 机器可读同步行：另一台设备「导入」用
+  const sync = {v:2, ts:Date.now(), done:done, wrong:Object.fromEntries(Object.entries(wrong).map(([k,w])=>[k,{y:w.yours,c:w.correct,n:w.count}]))};
+  lines.push('SYNC:' + JSON.stringify(sync));
   const ta = el('textarea'); ta.value = lines.join('\n');
   card.appendChild(ta);
   const b1 = el('button',null,'复制到剪贴板');
   b1.onclick = () => { ta.select(); document.execCommand('copy'); b1.textContent = '已复制 ✓'; };
+  const b2 = el('button','ghost','← 返回'); b2.onclick = home;
+  card.appendChild(b1); card.appendChild(b2);
+  app.appendChild(card);
+}
+
+// ===== 导入（跨设备同步，2026-11-21 新增）=====
+function importPage(){
+  const app = $('#app'); app.innerHTML = '';
+  const card = el('div','card','<h2>导入（从另一台设备同步）</h2><div class="sub">在另一台设备点「导出」，把整段文本复制发过来（微信/隔空投送都行），粘贴到下面点导入。错题和已刷进度会合并进来，不覆盖本机记录。</div>');
+  const ta = el('textarea'); ta.placeholder = '把另一台设备导出的整段文本（含最后的 SYNC 行）粘到这里';
+  card.appendChild(ta);
+  const b1 = el('button', null, '导入合并');
+  b1.onclick = () => {
+    const t = ta.value || '';
+    const mLine = t.split('\n').map(s=>s.trim()).find(l => l.startsWith('SYNC:'));
+    if (!mLine) { alert('没找到 SYNC 行：请确认那台设备已刷新到最新版网页后重新导出'); return; }
+    try {
+      const s = JSON.parse(mLine.slice(5));
+      let added = 0, merged = 0, dmerge = 0;
+      Object.entries(s.wrong || {}).forEach(([id, w]) => {
+        const local = wrong[id];
+        if (!local) {
+          const parts = id.split('|');
+          const bank = parts[0], type = parts[1], n = parseInt(parts[2], 10);
+          const q = getQ(bank, type, n);
+          wrong[id] = {bank, type, n, q: q ? q.q : '', yours: w.y, correct: w.c, count: w.n, ts: s.ts};
+          added++;
+        } else {
+          local.count = Math.max(local.count, w.n);
+          merged++;
+        }
+      });
+      Object.entries(s.done || {}).forEach(([bank, types]) => {
+        done[bank] = done[bank] || {};
+        Object.entries(types || {}).forEach(([type, arr]) => {
+          const set = new Set(done[bank][type] || []);
+          (arr || []).forEach(n => set.add(n));
+          done[bank][type] = [...set];
+          dmerge += (arr || []).length;
+        });
+      });
+      LS.set('wrong', wrong); LS.set('done', done);
+      alert('导入完成：新增错题 ' + added + ' 条、合并 ' + merged + ' 条，进度并入 ' + dmerge + ' 条记录');
+      home();
+    } catch(e) {
+      alert('解析失败：粘贴的文本可能不完整，请重新复制整段导出内容');
+    }
+  };
   const b2 = el('button','ghost','← 返回'); b2.onclick = home;
   card.appendChild(b1); card.appendChild(b2);
   app.appendChild(card);
